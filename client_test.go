@@ -3,13 +3,11 @@ package client_test
 import (
 	"context"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	cloudevents "github.com/cloudevents/sdk-go"
 	client "github.com/projectriff/stream-client-go"
 )
 
@@ -22,9 +20,11 @@ func TestSimplePublishSubscribe(t *testing.T) {
 	c := setupStreamingClient(topic, t)
 
 	payload := "FOO"
-	headers := map[string]string{"H1":"V1", "H2":"V2"}
-	publish(c, payload, "text/plain", topic, headers, t)
-	subscribe(c, payload, topic, 0, headers, t)
+	err := publish(c, payload, "text/plain", t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscribe(c, payload, 0, t)
 }
 
 func setupStreamingClient(topic string, t *testing.T) *client.StreamClient {
@@ -35,16 +35,17 @@ func setupStreamingClient(topic string, t *testing.T) *client.StreamClient {
 	return c
 }
 
-func publish(c *client.StreamClient, value, contentType, topic string, headers map[string]string, t *testing.T) {
+func publish(c *client.StreamClient, value, contentType string, t *testing.T) error {
 	reader := strings.NewReader(value)
-	publishResult, err := c.Publish(context.Background(), reader, nil, contentType, headers)
+	publishResult, err := c.Publish(context.Background(), reader, nil, contentType)
 	if err != nil {
-		t.Error(err)
+		return err
 	}
 	fmt.Printf("Published: %+v\n", publishResult)
+	return nil
 }
 
-func subscribe(c *client.StreamClient, expectedValue, topic string, offset uint64, headers map[string]string, t *testing.T) {
+func subscribe(c *client.StreamClient, expectedValue string, offset uint64, t *testing.T) {
 
 	var errHandler client.EventErrHandler
 	errHandler = func(cancel context.CancelFunc, err error) {
@@ -53,16 +54,15 @@ func subscribe(c *client.StreamClient, expectedValue, topic string, offset uint6
 	}
 
 	payloadChan := make(chan string)
-	headersChan := make(chan map[string]string)
 
 	var eventHandler client.EventHandler
-	eventHandler = func(ctx context.Context, payload io.Reader, contentType string) error {
-		bytes, err := ioutil.ReadAll(payload)
+	eventHandler = func(ctx context.Context, event cloudevents.Event) error {
+
+		payload, err := event.DataBytes()
 		if err != nil {
 			return err
 		}
-		payloadChan <- string(bytes)
-		headersChan <- headers
+		payloadChan <- string(payload)
 		return nil
 	}
 
@@ -73,10 +73,6 @@ func subscribe(c *client.StreamClient, expectedValue, topic string, offset uint6
 	v1 := <-payloadChan
 	if v1 != expectedValue {
 		t.Errorf("expected value: %s, but was: %s", expectedValue, v1)
-	}
-	h := <- headersChan
-	if !reflect.DeepEqual(headers, h) {
-		t.Errorf("headers not equal. expected %s, but was: %s", headers, h)
 	}
 }
 
@@ -93,8 +89,8 @@ func TestSubscribeBeforePublish(t *testing.T) {
 	result := make(chan string)
 
 	var eventHandler client.EventHandler
-	eventHandler = func(ctx context.Context, payload io.Reader, contentType string) error {
-		bytes, err := ioutil.ReadAll(payload)
+	eventHandler = func(ctx context.Context, event cloudevents.Event) error {
+		bytes, err := event.DataBytes()
 		if err != nil {
 			return err
 		}
@@ -109,7 +105,10 @@ func TestSubscribeBeforePublish(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	publish(c, testVal, "text/plain", topic, nil, t)
+	err = publish(c, testVal, "text/plain", t)
+	if err != nil {
+		t.Fatal(err)
+	}
 	v1 := <- result
 	if v1 != testVal {
 		t.Errorf("expected value: %s, but was: %s", testVal, v1)
@@ -129,8 +128,8 @@ func TestSubscribeCancel(t *testing.T) {
 	result := make(chan string)
 
 	var eventHandler client.EventHandler
-	eventHandler = func(ctx context.Context, payload io.Reader, contentType string) error {
-		bytes, err := ioutil.ReadAll(payload)
+	eventHandler = func(ctx context.Context, event cloudevents.Event) error {
+		bytes, err := event.DataBytes()
 		if err != nil {
 			return err
 		}
@@ -170,8 +169,8 @@ func TestMultipleSubscribe(t *testing.T) {
 		panic(err)
 	}
 	var err error
-	_, err = c1.Subscribe(context.Background(), t.Name()+"1", 0, func(ctx context.Context, payload io.Reader, contentType string, headers map[string]string) error {
-		bytes, err := ioutil.ReadAll(payload)
+	_, err = c1.Subscribe(context.Background(), t.Name()+"1", 0, func(ctx context.Context, event cloudevents.Event) error {
+		bytes, err := event.DataBytes()
 		if err != nil {
 			return err
 		}
@@ -181,8 +180,8 @@ func TestMultipleSubscribe(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	_, err = c2.Subscribe(context.Background(), t.Name()+"2", 0, func(ctx context.Context, payload io.Reader, contentType string, headers map[string]string) error {
-		bytes, err := ioutil.ReadAll(payload)
+	_, err = c2.Subscribe(context.Background(), t.Name()+"2", 0, func(ctx context.Context, event cloudevents.Event) error {
+		bytes, err := event.DataBytes()
 		if err != nil {
 			return err
 		}
@@ -192,8 +191,14 @@ func TestMultipleSubscribe(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	publish(c1, testVal1, "text/plain", topic1, nil, t)
-	publish(c2, testVal2, "text/plain", topic1, nil, t)
+	err = publish(c1, testVal1, "text/plain", t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = publish(c2, testVal2, "text/plain", t)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	v1 := <-result1
 	if v1 != testVal1 {

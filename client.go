@@ -17,7 +17,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -53,7 +52,7 @@ type PublishResult struct {
 
 // EventHandler is a function to process the messages read from the stream and is passed as
 // a parameter to the subscribe call.
-type EventHandler = func(ctx context.Context, payload io.Reader, contentType string) error
+type EventHandler = func(ctx context.Context, event cloudevents.Event) error
 
 // EventErrHandler is a function to handle errors while reading subscription messages and
 // is passed as a parameter to the subscribe call.
@@ -78,11 +77,13 @@ func NewStreamClient(gateway string, topic string, acceptableContentType string)
 	}, nil
 }
 
-func (lc *StreamClient) Publish(ctx context.Context, payload io.Reader, key io.Reader, contentType string, headers map[string]string) (PublishResult, error) {
+func (lc *StreamClient) Publish(ctx context.Context, payload io.Reader, key io.Reader, contentType string) (PublishResult, error) {
 	var err error
 
-	event := cloudevents.NewEvent()
+	event := cloudevents.NewEvent("1.0")
 	event.SetID(fmt.Sprintf("scg-%d", time.Now().UnixNano()))
+	event.SetSource(lc.TopicName)
+	event.SetType("riff.stream.publish")
 	if chopContentType(contentType) != chopContentType(lc.acceptableContentType) { // TODO support smarter compatibility (eg subtypes)
 		return PublishResult{}, fmt.Errorf("contentType %q not compatible with expected contentType %q", contentType, lc.acceptableContentType)
 	}
@@ -174,16 +175,15 @@ func (lc *StreamClient) Subscribe(ctx context.Context, group string, offset uint
 				return
 			}
 
-			m := cloudevents.NewEvent()
+			event := cloudevents.NewEvent()
 
 			record := recvReply.GetRecord()
-			err = m.UnmarshalJSON(record.Value)
+			err = event.UnmarshalJSON(record.Value)
 			if err != nil {
 				e(cancel, err)
 				return
 			}
-			payload, err := m.DataBytes()
-			err = f(subContext, bytes.NewReader(payload), m.DataContentType())
+			err = f(subContext, event)
 			if err != nil {
 				e(cancel, err)
 				return
