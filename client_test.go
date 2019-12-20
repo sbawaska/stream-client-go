@@ -37,7 +37,7 @@ func setupStreamingClient(topic string, t *testing.T) *client.StreamClient {
 
 func publish(c *client.StreamClient, value, contentType string, t *testing.T) error {
 	reader := strings.NewReader(value)
-	publishResult, err := c.Publish(context.Background(), reader, nil, contentType)
+	publishResult, err := c.Publish(context.Background(), "test", reader, nil, contentType)
 	if err != nil {
 		return err
 	}

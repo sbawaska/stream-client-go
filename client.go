@@ -77,13 +77,13 @@ func NewStreamClient(gateway string, topic string, acceptableContentType string)
 	}, nil
 }
 
-func (lc *StreamClient) Publish(ctx context.Context, payload io.Reader, key io.Reader, contentType string) (PublishResult, error) {
+func (lc *StreamClient) Publish(ctx context.Context, source string, payload io.Reader, key io.Reader, contentType string) (PublishResult, error) {
 	var err error
 
 	event := cloudevents.NewEvent("1.0")
 	event.SetID(fmt.Sprintf("scg-%d", time.Now().UnixNano()))
-	event.SetSource(lc.TopicName)
-	event.SetType("riff.stream.publish")
+	event.SetSource(source)
+	event.SetType(fmt.Sprintf("riff.stream.publish.%s", lc.TopicName))
 	if chopContentType(contentType) != chopContentType(lc.acceptableContentType) { // TODO support smarter compatibility (eg subtypes)
 		return PublishResult{}, fmt.Errorf("contentType %q not compatible with expected contentType %q", contentType, lc.acceptableContentType)
 	}
